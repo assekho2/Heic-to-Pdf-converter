@@ -1,7 +1,8 @@
-HEIC to JPG Converter (macOS)
+HEIC to PDF Converter (macOS)
 =============================
 
-This tool converts Apple HEIC photos (.heic) into standard JPG images.
+This tool converts Apple HEIC photos (.heic) into PDF documents
+(one PDF page per photo).
 
 
 HOW TO USE (easiest)
@@ -17,7 +18,7 @@ HOW TO USE (easiest)
    right-click "Convert.command", choose "Open", then click "Open" in the
    dialog. You only need to do this once.
 
-3. The converted .jpg images appear in a new "output" folder created here.
+3. The converted .pdf files appear in a new "output" folder created here.
    That's it!
 
 
@@ -39,14 +40,14 @@ HOW TO USE (from a terminal, if you prefer)
 
        ./heic_converter_mt "photos to convert"
 
-5. The converted .jpg images appear in a new "output" folder.
+5. The converted .pdf files appear in a new "output" folder.
 
 
 OPTIONS (optional)
 ------------------
 You can add these after the command in step 4:
 
-  -q <1-100>   JPEG quality (default: 90)
+  -q <1-100>   image quality (default: 90)
   -t <n>       number of worker threads (default: all CPU cores)
   -o <folder>  output folder (default: output)
   --help       show full help

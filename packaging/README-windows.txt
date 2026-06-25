@@ -1,7 +1,8 @@
-HEIC to JPG Converter (Windows)
+HEIC to PDF Converter (Windows)
 ===============================
 
-This tool converts Apple HEIC photos (.heic) into standard JPG images.
+This tool converts Apple HEIC photos (.heic) into PDF documents
+(one PDF page per photo).
 
 
 HOW TO USE (easiest)
@@ -12,7 +13,7 @@ HOW TO USE (easiest)
 
 2. Double-click "Convert.bat".
 
-3. The converted .jpg images appear in a new "output" folder created here.
+3. The converted .pdf files appear in a new "output" folder created here.
    That's it!
 
 (If Windows shows a blue "Windows protected your PC" box, see the note below.)
@@ -33,7 +34,7 @@ HOW TO USE (from a terminal, if you prefer)
 
        heic_converter_mt.exe "photos to convert"
 
-4. The converted .jpg images appear in a new "output" folder.
+4. The converted .pdf files appear in a new "output" folder.
 
 
 NOTE: "Windows protected your PC"
@@ -46,7 +47,7 @@ OPTIONS (optional)
 ------------------
 You can add these after the command in step 3:
 
-  -q <1-100>   JPEG quality (default: 90)
+  -q <1-100>   image quality (default: 90)
   -t <n>       number of worker threads (default: all CPU cores)
   -o <folder>  output folder (default: output)
   --help       show full help

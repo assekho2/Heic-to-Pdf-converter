@@ -1,4 +1,4 @@
-# Cross-platform Makefile for the HEIC -> JPEG converters.
+# Cross-platform Makefile for the HEIC -> PDF converters.
 #
 # Dependencies:
 #   macOS:    brew install libheif jpeg

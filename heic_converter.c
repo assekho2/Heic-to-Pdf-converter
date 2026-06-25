@@ -1,5 +1,9 @@
 /*
-Cross-platform (Windows / macOS / Linux) HEIC -> JPEG converter.
+Cross-platform (Windows / macOS / Linux) HEIC -> PDF converter.
+
+Each .heic photo becomes a one-page PDF. The decoded image is JPEG-compressed
+(the quality option controls that compression) and embedded directly into the
+PDF using the DCTDecode filter, so libjpeg is still required.
 
 Build with the included Makefile:
     make heic_converter
@@ -47,6 +51,8 @@ typedef struct {
     struct heif_image_handle* handle;
     struct heif_image* img;
     FILE* outfile;
+    unsigned char* jpeg_buf;   /* in-memory JPEG, embedded into the PDF */
+    unsigned long jpeg_size;
     struct jpeg_compress_struct cinfo;
     struct jpeg_error_mgr jerr;
 } ConversionContext;
@@ -101,9 +107,62 @@ static void cleanup_context(ConversionContext* ctx) {
     }
 
     jpeg_destroy_compress(&ctx->cinfo);
+
+    /* jpeg_mem_dest allocates this buffer for us; it is ours to free. */
+    if (ctx->jpeg_buf) {
+        free(ctx->jpeg_buf);
+        ctx->jpeg_buf = NULL;
+    }
 }
 
-static int convert_heic_to_jpg(const char* input_path, const char* output_dir, int jpeg_quality) {
+/* Wrap a JPEG-compressed RGB image in a minimal one-page PDF. The JPEG bytes
+   are embedded verbatim via the DCTDecode filter (no re-encoding). The page is
+   sized to the image so one pixel maps to one PDF point. Returns 1 on success. */
+static int write_jpeg_as_pdf(FILE* out, const unsigned char* jpeg,
+                             unsigned long jpeg_len, int width, int height) {
+    long offsets[6] = {0};
+
+    if (fprintf(out, "%%PDF-1.4\n") < 0) return 0;
+
+    offsets[1] = ftell(out);
+    fprintf(out, "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
+
+    offsets[2] = ftell(out);
+    fprintf(out, "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n");
+
+    offsets[3] = ftell(out);
+    fprintf(out, "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 %d %d] "
+                 "/Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>\nendobj\n",
+            width, height);
+
+    offsets[4] = ftell(out);
+    fprintf(out, "4 0 obj\n<< /Type /XObject /Subtype /Image /Width %d /Height %d "
+                 "/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode "
+                 "/Length %lu >>\nstream\n",
+            width, height, jpeg_len);
+    if (fwrite(jpeg, 1, jpeg_len, out) != jpeg_len) return 0;
+    fprintf(out, "\nendstream\nendobj\n");
+
+    /* Content stream: draw the image scaled to fill the page. */
+    char content[128];
+    int clen = snprintf(content, sizeof(content),
+                        "q\n%d 0 0 %d 0 0 cm\n/Im0 Do\nQ\n", width, height);
+    offsets[5] = ftell(out);
+    fprintf(out, "5 0 obj\n<< /Length %d >>\nstream\n", clen);
+    fwrite(content, 1, (size_t)clen, out);
+    fprintf(out, "endstream\nendobj\n");
+
+    long xref = ftell(out);
+    fprintf(out, "xref\n0 6\n0000000000 65535 f \n");
+    for (int i = 1; i <= 5; i++) {
+        fprintf(out, "%010ld 00000 n \n", offsets[i]);
+    }
+    fprintf(out, "trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n%ld\n%%%%EOF\n", xref);
+
+    return (ferror(out) == 0);
+}
+
+static int convert_heic_to_pdf(const char* input_path, const char* output_dir, int jpeg_quality) {
     ConversionContext ctx = {0};  // Zero-initialize all members
     struct heif_error err;
     int success = 0;
@@ -141,23 +200,20 @@ static int convert_heic_to_jpg(const char* input_path, const char* output_dir, i
     int stride;
     const uint8_t* data = heif_image_get_plane_readonly(ctx.img, heif_channel_interleaved, &stride);
 
+    int width = heif_image_get_width(ctx.img, heif_channel_interleaved);
+    int height = heif_image_get_height(ctx.img, heif_channel_interleaved);
+
     // Create output filename
     char output_filename[PATH_BUF_SIZE];
     const char* base_name = path_basename(input_path);
 
-    snprintf(output_filename, sizeof(output_filename), "%s/%.*s.jpg",
+    snprintf(output_filename, sizeof(output_filename), "%s/%.*s.pdf",
              output_dir, (int)(strrchr(base_name, '.') - base_name), base_name);
 
-    // Open output file
-    if (!(ctx.outfile = fopen(output_filename, "wb"))) {
-        fprintf(stderr, "Could not create output file: %s\n", output_filename);
-        goto cleanup;
-    }
-
-    // Setup JPEG compression
-    jpeg_stdio_dest(&ctx.cinfo, ctx.outfile);
-    ctx.cinfo.image_width = heif_image_get_width(ctx.img, heif_channel_interleaved);
-    ctx.cinfo.image_height = heif_image_get_height(ctx.img, heif_channel_interleaved);
+    // Compress the image to JPEG in memory, then embed it in a PDF.
+    jpeg_mem_dest(&ctx.cinfo, &ctx.jpeg_buf, &ctx.jpeg_size);
+    ctx.cinfo.image_width = width;
+    ctx.cinfo.image_height = height;
     ctx.cinfo.input_components = 3;
     ctx.cinfo.in_color_space = JCS_RGB;
 
@@ -172,6 +228,18 @@ static int convert_heic_to_jpg(const char* input_path, const char* output_dir, i
     }
 
     jpeg_finish_compress(&ctx.cinfo);
+
+    // Open output file and wrap the JPEG in a one-page PDF.
+    if (!(ctx.outfile = fopen(output_filename, "wb"))) {
+        fprintf(stderr, "Could not create output file: %s\n", output_filename);
+        goto cleanup;
+    }
+
+    if (!write_jpeg_as_pdf(ctx.outfile, ctx.jpeg_buf, ctx.jpeg_size, width, height)) {
+        fprintf(stderr, "Could not write PDF: %s\n", output_filename);
+        goto cleanup;
+    }
+
     success = 1;
 
 cleanup:
@@ -202,7 +270,7 @@ static int process_directory(const char* input_dir, const char* output_dir, int 
         if (!has_heic_extension(find_data.cFileName)) continue;
 
         snprintf(input_path, sizeof(input_path), "%s/%s", input_dir, find_data.cFileName);
-        if (convert_heic_to_jpg(input_path, output_dir, jpeg_quality)) {
+        if (convert_heic_to_pdf(input_path, output_dir, jpeg_quality)) {
             files_processed++;
         }
     } while (FindNextFileA(find, &find_data));
@@ -220,7 +288,7 @@ static int process_directory(const char* input_dir, const char* output_dir, int 
     while ((entry = readdir(dir)) != NULL) {
         if (has_heic_extension(entry->d_name)) {
             snprintf(input_path, sizeof(input_path), "%s/%s", input_dir, entry->d_name);
-            if (convert_heic_to_jpg(input_path, output_dir, jpeg_quality)) {
+            if (convert_heic_to_pdf(input_path, output_dir, jpeg_quality)) {
                 files_processed++;
             }
         }
@@ -238,12 +306,12 @@ int main(void) {
     int files_processed;
     int jpeg_quality;
 
-    printf("Enter JPEG quality (1-100, recommended 75-95): ");
+    printf("Enter image quality (1-100, recommended 75-95): ");
     if (scanf("%d", &jpeg_quality) != 1 || jpeg_quality < 1 || jpeg_quality > 100) {
         fprintf(stderr, "Invalid quality value. Please enter a number between 1 and 100.\n");
         return 1;
     }
-    printf("Using JPEG quality: %d\n", jpeg_quality);
+    printf("Using image quality: %d\n", jpeg_quality);
 
     if (!ensure_directory(output_dir)) {
         fprintf(stderr, "Failed to create output directory\n");
@@ -260,7 +328,7 @@ int main(void) {
     if (files_processed == 0) {
         printf("No HEIC files found in the Photos directory.\n");
     } else {
-        printf("Successfully converted %d photos to JPEG format.\n", files_processed);
+        printf("Successfully converted %d photos to PDF format.\n", files_processed);
     }
 
     return 0;

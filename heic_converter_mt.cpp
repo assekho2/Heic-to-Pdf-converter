@@ -1,5 +1,9 @@
 /*
-Cross-platform (Windows / macOS / Linux) multithreaded HEIC -> JPEG converter.
+Cross-platform (Windows / macOS / Linux) multithreaded HEIC -> PDF converter.
+
+Each .heic photo becomes a one-page PDF. The decoded image is JPEG-compressed
+(the quality option controls that compression) and embedded directly into the
+PDF using the DCTDecode filter, so libjpeg is still required.
 
 Build with the included Makefile:
     make heic_converter_mt
@@ -17,7 +21,7 @@ Windows (MSYS2 MinGW-w64 shell, after
     g++ -std=c++17 -O2 -pthread -o heic_converter_mt.exe heic_converter_mt.cpp -lheif -ljpeg
 
 Run examples:
-  ./heic_converter_mt                          # convert .heic files in the current directory -> ./output
+  ./heic_converter_mt                          # convert .heic files in the current directory -> ./output (PDFs)
   ./heic_converter_mt ~/Pictures -q 85 -t 8    # explicit input dir, quality, threads
   ./heic_converter_mt --help
 */
@@ -70,6 +74,8 @@ typedef struct {
     struct heif_image_handle* handle;
     struct heif_image* img;
     FILE* outfile;
+    unsigned char* jpeg_buf;   // in-memory JPEG, embedded into the PDF
+    unsigned long jpeg_size;
     struct jpeg_compress_struct cinfo;
     struct jpeg_error_mgr jerr;
 } ConversionContext;
@@ -133,9 +139,62 @@ static void cleanup_context(ConversionContext* ctx) {
     }
 
     jpeg_destroy_compress(&ctx->cinfo);
+
+    // jpeg_mem_dest allocates this buffer for us; it is ours to free.
+    if (ctx->jpeg_buf) {
+        free(ctx->jpeg_buf);
+        ctx->jpeg_buf = nullptr;
+    }
 }
 
-static bool convert_heic_to_jpg(const char* input_path, const char* output_dir, int jpeg_quality) {
+// Wrap a JPEG-compressed RGB image in a minimal one-page PDF. The JPEG bytes
+// are embedded verbatim via the DCTDecode filter (no re-encoding). The page is
+// sized to the image so one pixel maps to one PDF point. Returns true on success.
+static bool write_jpeg_as_pdf(FILE* out, const unsigned char* jpeg,
+                              unsigned long jpeg_len, int width, int height) {
+    long offsets[6] = {0};
+
+    if (std::fprintf(out, "%%PDF-1.4\n") < 0) return false;
+
+    offsets[1] = std::ftell(out);
+    std::fprintf(out, "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
+
+    offsets[2] = std::ftell(out);
+    std::fprintf(out, "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n");
+
+    offsets[3] = std::ftell(out);
+    std::fprintf(out, "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 %d %d] "
+                      "/Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>\nendobj\n",
+                 width, height);
+
+    offsets[4] = std::ftell(out);
+    std::fprintf(out, "4 0 obj\n<< /Type /XObject /Subtype /Image /Width %d /Height %d "
+                      "/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode "
+                      "/Length %lu >>\nstream\n",
+                 width, height, jpeg_len);
+    if (std::fwrite(jpeg, 1, jpeg_len, out) != jpeg_len) return false;
+    std::fprintf(out, "\nendstream\nendobj\n");
+
+    // Content stream: draw the image scaled to fill the page.
+    char content[128];
+    int clen = std::snprintf(content, sizeof(content),
+                             "q\n%d 0 0 %d 0 0 cm\n/Im0 Do\nQ\n", width, height);
+    offsets[5] = std::ftell(out);
+    std::fprintf(out, "5 0 obj\n<< /Length %d >>\nstream\n", clen);
+    std::fwrite(content, 1, (size_t)clen, out);
+    std::fprintf(out, "endstream\nendobj\n");
+
+    long xref = std::ftell(out);
+    std::fprintf(out, "xref\n0 6\n0000000000 65535 f \n");
+    for (int i = 1; i <= 5; i++) {
+        std::fprintf(out, "%010ld 00000 n \n", offsets[i]);
+    }
+    std::fprintf(out, "trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n%ld\n%%%%EOF\n", xref);
+
+    return (std::ferror(out) == 0);
+}
+
+static bool convert_heic_to_pdf(const char* input_path, const char* output_dir, int jpeg_quality) {
     ConversionContext ctx{};
     struct heif_error err{};
 
@@ -194,7 +253,7 @@ static bool convert_heic_to_jpg(const char* input_path, const char* output_dir, 
         return false;
     }
 
-    // Build output filename: output_dir/base_name.jpg
+    // Build output filename: output_dir/base_name.pdf
     const char* base = path_basename(input_path);
 
     std::string base_name(base);
@@ -202,16 +261,10 @@ static bool convert_heic_to_jpg(const char* input_path, const char* output_dir, 
     if (dotpos != std::string::npos) base_name.resize(dotpos);
 
     char output_path[PATH_BUF_SIZE];
-    std::snprintf(output_path, sizeof(output_path), "%s/%s.jpg", output_dir, base_name.c_str());
+    std::snprintf(output_path, sizeof(output_path), "%s/%s.pdf", output_dir, base_name.c_str());
 
-    ctx.outfile = std::fopen(output_path, "wb");
-    if (!ctx.outfile) {
-        std::fprintf(stderr, "Could not create output file: %s\n", output_path);
-        return false;
-    }
-
-    // JPEG setup
-    jpeg_stdio_dest(&ctx.cinfo, ctx.outfile);
+    // Compress the image to JPEG in memory, then embed it in a PDF.
+    jpeg_mem_dest(&ctx.cinfo, &ctx.jpeg_buf, &ctx.jpeg_size);
     ctx.cinfo.image_width = width;
     ctx.cinfo.image_height = height;
     ctx.cinfo.input_components = 3;
@@ -228,6 +281,19 @@ static bool convert_heic_to_jpg(const char* input_path, const char* output_dir, 
     }
 
     jpeg_finish_compress(&ctx.cinfo);
+
+    // Open output file and wrap the JPEG in a one-page PDF.
+    ctx.outfile = std::fopen(output_path, "wb");
+    if (!ctx.outfile) {
+        std::fprintf(stderr, "Could not create output file: %s\n", output_path);
+        return false;
+    }
+
+    if (!write_jpeg_as_pdf(ctx.outfile, ctx.jpeg_buf, ctx.jpeg_size, width, height)) {
+        std::fprintf(stderr, "Could not write PDF: %s\n", output_path);
+        return false;
+    }
+
     return true;
 }
 
@@ -337,16 +403,16 @@ static int parse_int(const char* s, int fallback) {
 
 static void print_usage(const char* prog) {
     std::printf(
-        "heic_converter_mt %s - batch HEIC to JPEG converter\n"
+        "heic_converter_mt %s - batch HEIC to PDF converter\n"
         "\n"
         "Usage: %s [options] [input_dir]\n"
         "\n"
         "Converts every .heic file in input_dir (default: current directory)\n"
-        "to a .jpg in the output directory, using multiple threads.\n"
+        "to a one-page .pdf in the output directory, using multiple threads.\n"
         "\n"
         "Options:\n"
         "  -o, --output <dir>   output directory (default: output)\n"
-        "  -q, --quality <n>    JPEG quality 1-100 (default: 90)\n"
+        "  -q, --quality <n>    image quality 1-100 (default: 90)\n"
         "  -t, --threads <n>    worker threads (default: CPU cores)\n"
         "  -h, --help           show this help and exit\n"
         "  -V, --version        show version and exit\n",
@@ -419,7 +485,7 @@ int main(int argc, char** argv) {
     auto worker = [&] {
         std::string path;
         while (wq.pop(path)) {
-            bool ok = convert_heic_to_jpg(path.c_str(), output_dir, jpeg_quality);
+            bool ok = convert_heic_to_pdf(path.c_str(), output_dir, jpeg_quality);
             if (ok) converted_ok.fetch_add(1, std::memory_order_relaxed);
             else converted_fail.fetch_add(1, std::memory_order_relaxed);
 

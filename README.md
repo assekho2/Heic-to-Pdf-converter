@@ -1,6 +1,6 @@
-# HEIC to JPG Converter
+# HEIC to PDF Converter
 
-A fast, no-install command-line tool that batch-converts iPhone `.heic` photos to `.jpg`. Multithreaded, works on Windows and macOS, and the downloads are single self-contained binaries — no libraries or runtimes to install.
+A fast, no-install command-line tool that batch-converts iPhone `.heic` photos to `.pdf`. Each photo becomes a one-page PDF. Multithreaded, works on Windows and macOS, and the downloads are single self-contained binaries — no libraries or runtimes to install.
 
 ![Terminal demo of heic_converter_mt converting a folder of HEIC photos](docs/demo.svg)
 
@@ -15,13 +15,13 @@ Grab the latest release from the [**Releases page**](https://github.com/assekho2
 
 ## Quick start
 
-Each download unzips to a `HEIC-to-JPG-Converter` folder containing the program, a `photos to convert` folder, a double-click launcher, and a `readme.txt`.
+Each download unzips to a `HEIC-to-PDF-Converter` folder containing the program, a `photos to convert` folder, a double-click launcher, and a `readme.txt`.
 
 ### Windows
 
-1. Unzip the download. Open the `HEIC-to-JPG-Converter` folder.
+1. Unzip the download. Open the `HEIC-to-PDF-Converter` folder.
 2. Drop your `.heic` photos into the `photos to convert` folder.
-3. Double-click **`Convert.bat`**. JPEGs appear in a new `output` subfolder.
+3. Double-click **`Convert.bat`**. PDFs appear in a new `output` subfolder.
 
 > **"Windows protected your PC"?** SmartScreen warns about unsigned downloads. Click **More info → Run anyway**.
 
@@ -29,9 +29,9 @@ Prefer a terminal? Type `cmd` in the Explorer address bar and run `heic_converte
 
 ### macOS
 
-1. Unzip the download (double-click the `.tar.gz`). Open the `HEIC-to-JPG-Converter` folder.
+1. Unzip the download (double-click the `.tar.gz`). Open the `HEIC-to-PDF-Converter` folder.
 2. Drop your `.heic` photos into the `photos to convert` folder.
-3. Double-click **`Convert.command`**. JPEGs appear in a new `output` subfolder.
+3. Double-click **`Convert.command`**. PDFs appear in a new `output` subfolder.
 
    First run only: macOS may block the unsigned launcher — right-click `Convert.command`, choose **Open**, then **Open** again.
 
@@ -45,11 +45,11 @@ Full instructions are also in the `readme.txt` inside each download.
 heic_converter_mt [options] [input_dir]
 
 Converts every .heic file in input_dir (default: current directory)
-to a .jpg in the output directory, using multiple threads.
+to a one-page .pdf in the output directory, using multiple threads.
 
 Options:
   -o, --output <dir>   output directory (default: output)
-  -q, --quality <n>    JPEG quality 1-100 (default: 90)
+  -q, --quality <n>    image quality 1-100 (default: 90)
   -t, --threads <n>    worker threads (default: CPU cores)
   -h, --help           show this help and exit
   -V, --version        show version and exit
@@ -93,6 +93,10 @@ make static           # portable heic_converter_mt with libheif/libde265/libjpeg
 
 GitHub Actions builds Windows and macOS binaries on every push. Pushing a tag like `v1.1.0` builds, packages, and attaches the binaries to a GitHub Release automatically.
 
+## How it works
+
+Each page's image is JPEG-compressed (the `-q` quality option controls that compression) and embedded directly into the PDF using the `DCTDecode` filter — so the PDFs stay compact and no separate PDF library is needed.
+
 ## License
 
-[MIT](LICENSE). HEIC decoding uses [libheif](https://github.com/strukturag/libheif) and [libde265](https://github.com/strukturag/libde265); JPEG encoding uses [libjpeg-turbo](https://github.com/libjpeg-turbo/libjpeg-turbo).
+[MIT](LICENSE). HEIC decoding uses [libheif](https://github.com/strukturag/libheif) and [libde265](https://github.com/strukturag/libde265); image compression uses [libjpeg-turbo](https://github.com/libjpeg-turbo/libjpeg-turbo).

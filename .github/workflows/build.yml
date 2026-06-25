@@ -81,10 +81,10 @@ jobs:
 
       - name: Package artifacts
         run: |
-          # Each archive contains a single "HEIC-to-JPG-Converter" folder
+          # Each archive contains a single "HEIC-to-PDF-Converter" folder
           # holding the binary, an empty "photos to convert" folder for the
           # user to drop photos into, a double-click launcher, and a readme.txt.
-          folder="HEIC-to-JPG-Converter"
+          folder="HEIC-to-PDF-Converter"
 
           # Windows
           win="heic_converter_mt-windows-x64"

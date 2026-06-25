@@ -1,9 +1,9 @@
 #!/bin/bash
-# Double-clickable launcher for the HEIC to JPG Converter.
+# Double-clickable launcher for the HEIC to PDF Converter.
 cd "$(dirname "$0")"
 
 echo "============================================"
-echo "  HEIC to JPG Converter"
+echo "  HEIC to PDF Converter"
 echo "============================================"
 echo
 
@@ -15,7 +15,7 @@ echo "\"photos to convert\" folder..."
 echo
 ./heic_converter_mt "photos to convert"
 echo
-echo "Done. Your .jpg files are in the \"output\" folder."
+echo "Done. Your .pdf files are in the \"output\" folder."
 echo
 echo "Press any key to close this window."
 read -n 1 -s
