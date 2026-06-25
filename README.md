@@ -6,7 +6,7 @@ A fast, no-install command-line tool that batch-converts iPhone `.heic` photos t
 
 ## Download
 
-Grab the latest release from the [**Releases page**](https://github.com/assekho2/Heic_to_Jpg_Converter/releases):
+Grab the latest release from the [**Releases page**](https://github.com/assekho2/Heic-to-Pdf-converter/releases):
 
 | Platform | File |
 |---|---|
